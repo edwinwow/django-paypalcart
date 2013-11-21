@@ -34,7 +34,6 @@ class Subscription(Product):
     recurrence_unit = models.CharField(max_length=1, null=True,
                                        choices=((None, ugettext_lazy("No recurrence")),)
                                        + _TIME_UNIT_CHOICES)
-    group = models.ForeignKey(auth.models.Group, null=False, blank=False, unique=False)
 
     _PLURAL_UNITS = {
         '0': ugettext_lazy('No trial'),
@@ -43,23 +42,6 @@ class Subscription(Product):
         'M': 'months',
         'Y': 'years',
         }
-
-
-class Transaction(models.Model):
-    timestamp = models.DateTimeField(auto_now_add=True, editable=False)
-    subscription = models.ForeignKey('subscription.Subscription',
-                                     null=True, blank=True, editable=False)
-    user = models.ForeignKey("auth.User",
-                             null=True, blank=True, editable=False)
-    ipn = models.ForeignKey(ipn.models.PayPalIPN,
-                            null=True, blank=True, editable=False)
-    event = models.CharField(max_length=100, editable=False)
-    amount = models.DecimalField(max_digits=64, decimal_places=2,
-                                 null=True, blank=True, editable=False)
-    comment = models.TextField(blank=True, default='')
-
-    class Meta:
-        ordering = ('-timestamp',)
 
 
 
@@ -78,16 +60,21 @@ auth.User.add_to_class('get_subscription', __user_get_subscription)
 class ActiveUSManager(models.Manager):
     """Custom Manager for UserSubscription that returns only live US objects."""
     def get_query_set(self):
-        return super(ActiveUSManager, self).get_query_set().filter(active=True)
+        return super(ActiveUSManager, self).get_query_set().filter(profile_status=3)
 
+_STATUS_CHOICES = {
+    "1": 'Cancelled',
+    "2": 'Suspended',
+    "3": 'Active'
+    "4": 'Deleted',
+    }
 
-class UserSubscription(models.Model):
+class SubscriptionProfile(models.Model):
     user = models.ForeignKey("auth.User")
     subscription = models.ForeignKey(Subscription)
-    expires = models.DateField(null=True, default=datetime.date.today)
-    active = models.BooleanField(default=True)
-    cancelled = models.BooleanField(default=True)
-
+    paypal_profile_id = models.CharField(max=15, null=False, blank=False, unique=True)
+    paypal_profile_status = models.PositiveIntegerField(null=False, blank=False, choices=_STATUS_CHOICES)
+    
     objects = models.Manager()
     active_objects = ActiveUSManager()
 
@@ -97,91 +84,27 @@ class UserSubscription(models.Model):
     class Meta:
         unique_together = (('user', 'subscription'), )
 
-    def user_is_group_member(self):
-        "Returns True is user is member of subscription's group"
-        return self.subscription.group in self.user.groups.all()
-    user_is_group_member.boolean = True
 
-    def expired(self):
-        """Returns true if there is more than SUBSCRIPTION_GRACE_PERIOD
-        days after expiration date."""
-        return self.expires is not None and (
-            self.expires + self.grace_timedelta < datetime.date.today())
-    expired.boolean = True
-
-    def valid(self):
-        """Validate group membership.
-
-        Returns True if not expired and user is in group, or expired
-        and user is not in group."""
-        if self.expired() or not self.active:
-            return not self.user_is_group_member()
-        else:
-            return self.user_is_group_member()
-    valid.boolean = True
-
-    def unsubscribe(self):
+    def cancel(self):
         """Unsubscribe user."""
-        self.user.groups.remove(self.subscription.group)
-        self.user.save()
+        self.paypal_profile_status = 1
+        self.save()
 
-    def subscribe(self):
+    def suspend(self):
         """Subscribe user."""
-        self.user.groups.add(self.subscription.group)
-        self.user.save()
+        self.paypal_profile_status =2
+        self.save()
+        
+    def active(self):
+        """Unsubscribe user."""
+        self.paypal_profile_status = 3
+        self.save()
+        
+    def delete(self):
+        """Unsubscribe user."""
+        self.paypal_profile_status = 4
+        self.save()
 
-    def fix(self):
-        """Fix group membership if not valid()."""
-        if not self.valid():
-            if self.expired() or not self.active:
-                self.unsubscribe()
-                Transaction(user=self.user, subscription=self.subscription, ipn=None,
-                            event='subscription expired'
-                            ).save()
-                if self.cancelled:
-                    self.delete()
-                    Transaction(user=self.user, subscription=self.subscription, ipn=None,
-                                event='remove subscription (expired)'
-                                ).save()
-            else:
-                self.subscribe()
-
-    def extend(self, timedelta=None):
-        """Extend subscription by `timedelta' or by subscription's
-        recurrence period."""
-        if timedelta is not None:
-            self.expires += timedelta
-        else:
-            if self.subscription.recurrence_unit:
-                self.expires = utils.extend_date_by(
-                    self.expires,
-                    self.subscription.recurrence_period,
-                    self.subscription.recurrence_unit)
-            else:
-                self.expires = None
-
-    def try_change(self, subscription):
-        """Check whether upgrading/downgrading to `subscription' is possible.
-
-        If subscription change is possible, returns false value; if
-        change is impossible, returns a list of reasons to display.
-
-        Checks are performed by sending
-        subscription.signals.change_check with sender being
-        UserSubscription object, and additional parameter
-        `subscription' being new Subscription instance.  Signal
-        listeners should return None if change is possible, or a
-        reason to display.
-        """
-        if self.subscription == subscription:
-            if self.active and self.cancelled:
-                return None  # allow resubscribing
-            return [_(u'This is your current subscription.')]
-        return [
-            res[1]
-            for res in signals.change_check.send(
-                self, subscription=subscription)
-            if res[1]]
 
     @models.permalink
     def get_absolute_url(self):
@@ -194,12 +117,5 @@ class UserSubscription(models.Model):
         return rv
 
 
-def unsubscribe_expired():
-    """Unsubscribes all users whose subscription has expired.
-    Loops through all UserSubscription objects with `expires' field
-    earlier than datetime.date.today() and forces correct group
-    membership."""
-    for us in UserSubscription.objects.get(expires__lt=datetime.date.today()):
-        us.fix()
 
 
