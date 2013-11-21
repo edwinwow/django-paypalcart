@@ -1,12 +1,12 @@
 from django.contrib import admin
 from cartridge.shop.admin import ProductAdmin
-from .models import Subscription, UserSubscription
+from .models import Subscription, SubscriptionProfile
 
 
 admin.site.register(Subscription, ProductAdmin)
 
-class UserSubscriptionAdmin(PageAdmin):
+class SubscriptionProfileAdmin(PageAdmin):
     fieldsets = deepcopy(PageAdmin.fieldsets) 
 
-admin.site.register(UserSubscription, UserSubscriptionAdmin)
+admin.site.register(SubscriptionProfile, SubscriptionProfile)
 
