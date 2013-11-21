@@ -2,6 +2,8 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render_to_response, get_object_or_404
 from django.core.urlresolvers import reverse
 from django_paypalcart import PayPal
+
+
     
 def checkout(request):
     if request.method == "POST":  
@@ -31,18 +33,22 @@ def checkout(request):
             
     return render_to_response('checkout.html')
     
-    
+
 def success(request):
     paypal = PayPal.PayPal()
     try:
         params = {
             'paymentaction': 'Sale',
             'token':         request.POST['token'],
+            'startdate':     request.POST['startdate']
+            'desc':          request.POST['desc']
+            'period':        request.POST['period']
+            'freq':          
             'payerid':       request.POST['payerid'],
             'amt':           request.POST['amount'],
             'currencycode':  request.POST['currencycode']
             }
-        response = paypal.DoExpressCheckoutPayment(params)
+        response = paypal.CreateRecurringPaymentsProfile(params)
         assert response['ACK'] == 'Success'
     except IOError:
         return render_to_response('error.html', {'type':'IOError'})
@@ -68,7 +74,7 @@ def confirm(request):
     paypal = PayPal.PayPal()
     try:
         params = {'token': request.GET['token']}
-        response = paypal.GetExpressCheckoutDetails(params)
+        response = paypal.GetRecurringPaymentsProfileDetails(params)
         assert response['ACK'] == 'Success'
     except IOError:
         return render_to_response('error.html', {'type':'IOError'})
@@ -79,3 +85,58 @@ def confirm(request):
 
     params = {'response':response, 'success_url':reverse('django_paypalcart.views.success')}
     return render_to_response('confirm.html', params)
+    
+    
+
+def cancelsubscription(request):
+    paypal = PayPal.PayPal()
+    try:
+        params = {
+            'profileid': request.GET['profileid']
+            "action": 'Cancel'}
+        response = paypal.ManageRecurringPaymentsProfileStatus(params)
+        assert response['ACK'] == 'Success'
+    except IOError:
+        return render_to_response('error.html', {'type':'IOError'})
+    except KeyError, e:
+        return render_to_response('error.html', {'type':'KeyError'})
+    except AssertionError, e:
+        return render_to_response('error.html', {'type':'ProcessingError', 'response':response})
+        
+
+def suspendsubscription(request):
+    paypal = PayPal.PayPal()
+    try:
+        params = {
+            'profileid': request.GET['profileid']
+            "action": 'Suspend'}
+        response = paypal.ManageRecurringPaymentsProfileStatus(params)
+        assert response['ACK'] == 'Success'
+    except IOError:
+        return render_to_response('error.html', {'type':'IOError'})
+    except KeyError, e:
+        return render_to_response('error.html', {'type':'KeyError'})
+    except AssertionError, e:
+        return render_to_response('error.html', {'type':'ProcessingError', 'response':response})
+
+    params = {'response':response, 'success_url':reverse('django_paypalcart.views.success')}
+    return render_to_response('confirm.html', params)
+    
+def reactivesubscription(request):
+    paypal = PayPal.PayPal()
+    try:
+        params = {
+            'profileid': request.GET['profileid']
+            "action": 'Reactivate'}
+        response = paypal.ManageRecurringPaymentsProfileStatus(params)
+        assert response['ACK'] == 'Success'
+    except IOError:
+        return render_to_response('error.html', {'type':'IOError'})
+    except KeyError, e:
+        return render_to_response('error.html', {'type':'KeyError'})
+    except AssertionError, e:
+        return render_to_response('error.html', {'type':'ProcessingError', 'response':response})
+
+    params = {'response':response, 'success_url':reverse('django_paypalcart.views.success')}
+    return render_to_response('confirm.html', params)
+        
